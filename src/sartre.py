@@ -1,11 +1,65 @@
 #!/usr/bin/python
 
 import sys
+import os
+import time
+
 from PyQt4 import QtCore
 from PyQt4 import QtGui
 from PyQt4 import QtWebKit
 
 import twitter
+import storm.locals as storm
+
+class Status(object):
+    __storm_table__ = "status"
+    id = storm.Int(primary=True)
+    screen_name = storm.Unicode()
+    text = storm.Unicode()
+
+# start to go
+class Poll(QtCore.QThread):
+    def __init__(self, store, parent = None):
+        """Poll accounts for new entries, insert into db
+        
+        Arguments:
+        - `self`:
+        - `parent`:
+        """
+        QtCore.QThread.__init__(self, parent)
+        self.store = store
+        self.exiting = False
+
+    def __del__(self):
+        """Ensure we cleanup/stop when destroyed
+        
+        Arguments:
+        - `self`:
+        """
+        self.exiting = True
+        self.wait()
+
+    def run(self):
+        """Poll
+        
+        Arguments:
+        - `self`:
+        """
+        while not self.exiting:
+            print "Poll.run"
+            
+            acnt = twitter.Twitter()
+            s = acnt.statuses.public_timeline()
+            for x in s:
+                status = Status()
+                status.screen_name = x['user']['screen_name']
+                status.text = x['text']
+                self.store.add(status)
+            
+            self.emit(QtCore.SIGNAL("polled()"))
+            
+            time.sleep(10)
+
 
 class Sartre(QtGui.QMainWindow):
     """Sartre main window
@@ -71,13 +125,27 @@ class Sartre(QtGui.QMainWindow):
 
         self.setCentralWidget(self.wid)
         
-        acnt = twitter.Twitter()
-        s = acnt.statuses.public_timeline()
+        self.db = storm.create_database("sqlite:")
+        self.store = storm.Store(self.db)
+        
+        self.store.execute("CREATE TABLE status "
+                           "(id INTEGER PRIMARY KEY, screen_name VARCHAR, "
+                           "text VARCHAR)")
+        
+        self.poller = Poll(self.store)
+        self.connect(self.poller, QtCore.SIGNAL("polled()"), self.updateView)
+        self.poller.start()
+
+    def updateView(self):
+        """Update the list of statuses
+        """
+        q = self.store.find(Status)
         html = "<html><body>"
-        for x in s:
-            html += "<p>" + x['user']['screen_name'] + " " + x['text']
+        for s in q.order_by(storm.Desc(Status.id)):
+            html += "<p>" + s.screen_name + " " + s.text
         html += "</body></html>"
         self.c1.setHtml(html)
+    
 
 if __name__ == '__main__':
     app = QtGui.QApplication(sys.argv)
