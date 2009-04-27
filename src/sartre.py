@@ -10,6 +10,7 @@ from PyQt4 import QtWebKit
 
 import twitter
 import storm.locals as storm
+import simplejson
 
 class Status(object):
     __storm_table__ = "status"
@@ -48,8 +49,10 @@ class Poll(QtCore.QThread):
         while not self.exiting:
             print "Poll.run"
             
-            acnt = twitter.Twitter()
-            s = acnt.statuses.public_timeline()
+            #acnt = twitter.Twitter()
+            #s = acnt.statuses.public_timeline()
+            s = [{u'user':{u'screen_name':u'screen name1'},
+                  u'text':u'this is @phunt2name status #hashtagbabs'}]
             for x in s:
                 status = Status()
                 status.screen_name = x['user']['screen_name']
@@ -107,7 +110,9 @@ class Sartre(QtGui.QMainWindow):
         self.hbox.addWidget(self.c1)
 
         self.web = QtWebKit.QWebView()
+        #self.web.load(QtCore.QUrl("test.html"))
         self.web.load(QtCore.QUrl("col.html"))
+        #self.web.load(QtCore.QUrl("sar.col1.html"))
         self.hbox.addWidget(self.web)
 
         self.web = QtWebKit.QWebView()
@@ -124,6 +129,8 @@ class Sartre(QtGui.QMainWindow):
         self.vbox.addWidget(self.status)
 
         self.setCentralWidget(self.wid)
+
+        self.load_extensions()
         
         self.db = storm.create_database("sqlite:")
         self.store = storm.Store(self.db)
@@ -136,16 +143,54 @@ class Sartre(QtGui.QMainWindow):
         self.connect(self.poller, QtCore.SIGNAL("polled()"), self.updateView)
         self.poller.start()
 
+    def load_extensions(self):
+        """Read the manifest files and register the particular scripts
+        """
+        self.viewscripts = {}
+        self.viewscripts['twitter'] = []
+        for dirname, dirnames, filenames in os.walk('extensions'):
+            for subdirname in dirnames:
+                path = os.path.join(dirname, subdirname, 'manifest.js')
+                try:
+                    f = open(path)
+                except:
+                    print "unable to load " + path
+                else:
+                    manifest = simplejson.load(f)
+                    f.close()
+                    print "loading views " + path
+                    for key, value in manifest.get('views', {}).items():
+                        for s in value:
+                            spath =  os.path.join(dirname, subdirname, s)
+                            self.viewscripts.get(key,[]).append(spath)
+                            print "  " + key + "->" + spath
+
     def updateView(self):
         """Update the list of statuses
         """
+        print "updating view"
         q = self.store.find(Status)
-        html = "<html><body>"
+        html = []
+        html.append('<html><head>')
+        html.append('<link rel=StyleSheet href="style.css" type="text/css">')
+        html.append('<script type="text/javascript" src="jquery-1.3.2.js"></script>')
+        for s in self.viewscripts.get('twitter'):
+            html.append('<script type="text/javascript" src="'
+                        + s + '"></script>')
+        html.append('</head><body>')
         for s in q.order_by(storm.Desc(Status.id)):
-            html += "<p>" + s.screen_name + " " + s.text
-        html += "</body></html>"
-        self.c1.setHtml(html)
-    
+            html.append('<p><div class="sn">')
+            html.append(s.screen_name)
+            html.append('</div> <div class="tx">')
+            html.append(s.text)
+            html.append('</div>')
+        html.append("</body></html>")
+        content = ''.join(html)
+        f = open('/tmp/sar.col1.html', 'w')
+        f.write(content)
+        f.close()
+        self.c1.setHtml(content, QtCore.QUrl(os.getcwd() + '/'))
+
 
 if __name__ == '__main__':
     app = QtGui.QApplication(sys.argv)
