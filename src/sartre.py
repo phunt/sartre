@@ -51,8 +51,8 @@ class Poll(QtCore.QThread):
             
             #acnt = twitter.Twitter()
             #s = acnt.statuses.public_timeline()
-            s = [{u'user':{u'screen_name':u'screen name1'},
-                  u'text':u'this is @phunt2name status #hashtagbabs'}]
+            s = [{u'user':{u'screen_name':u'phunt'},
+                  u'text':u'this is @phunt status #twitter http://twitpic.com/1e10q image'}]
             for x in s:
                 status = Status()
                 status.screen_name = x['user']['screen_name']
@@ -61,7 +61,7 @@ class Poll(QtCore.QThread):
             
             self.emit(QtCore.SIGNAL("polled()"))
             
-            time.sleep(10)
+            time.sleep(3)
 
 
 class Sartre(QtGui.QMainWindow):
@@ -179,7 +179,7 @@ class Sartre(QtGui.QMainWindow):
                         + s + '"></script>')
         html.append('</head><body>')
         for s in q.order_by(storm.Desc(Status.id)):
-            html.append('<p><div class="sn">')
+            html.append('<div class="sn">')
             html.append(s.screen_name)
             html.append('</div> <div class="tx">')
             html.append(s.text)
