@@ -14,22 +14,32 @@ from PyQt4.QtWebKit import *
 import storm.locals as storm
 import simplejson
 
-import pickle
+import codecs
 
-class SartreView(QtCore.QObject):
-    def __init__(self):
+class SartreStore(QtCore.QObject):
+    def __init__(self, store):
         """Represents a view to JS
         
         Arguments:
         - `self`:
         """
         QtCore.QObject.__init__(self)
+        self.store = store
         self.statuses = []
+
+    @pyqtSignature("done()")
+    def done(self):
+        print "done"
+        self.emit(QtCore.SIGNAL("polled()"))
     
     @pyqtSignature("add(QVariantMap)")
     def add(self, data):
-        self.statuses.append({u'user':{u'screen_name':unicode(data.get(QString('screen_name')).toString())},
-                              u'text':unicode(data.get(QString('text')).toString())})
+        print "add:" + str(data)
+        status = Status()
+        status.screen_name = unicode(data.get(QString('screen_name'))
+                                     .toString())
+        status.text = unicode(data.get(QString('text')).toString())
+        self.store.add(status)
 
 
 class Status(object):
@@ -48,9 +58,17 @@ class Poll(QtCore.QThread):
         - `parent`:
         """
         QtCore.QThread.__init__(self, parent)
-        self.store = store
+        self.store = SartreStore(store)
         self.page = page
+        self.frame = page.mainFrame()
+
+        self.connect(self.frame, QtCore.SIGNAL("javaScriptWindowObjectCleared()"), self.reset)
+
         self.exiting = False
+
+    def reset(self):
+        print "resetting"
+        self.frame.addToJavaScriptWindowObject("sartrestore", self.store)
 
     def __del__(self):
         """Ensure we cleanup/stop when destroyed
@@ -69,23 +87,13 @@ class Poll(QtCore.QThread):
         """
         while not self.exiting:
             print "Poll.run"
-            
-            v = SartreView()
-            self.page.settings().setAttribute(QtWebKit.QWebSettings.JavascriptEnabled, True)
+            self.emit(QtCore.SIGNAL("poll()"))
+            #self.frame.evaluateJavaScript("twitter_poll(sartrestore)")
 
-            frame = self.page.mainFrame()
-            frame.addToJavaScriptWindowObject("tview", v)
-            frame.evaluateJavaScript("twitter_poll(tview)")
-            s = v.statuses
-            for x in s:
-                status = Status()
-                status.screen_name = x['user']['screen_name']
-                status.text = x['text']
-                self.store.add(status)
+            #self.frame.evaluateJavaScript("sartrestore.add({'screen_name':'test','text':'test1'})")
+            #self.frame.evaluateJavaScript("sartrestore.done()")
             
-            self.emit(QtCore.SIGNAL("polled()"))
-            
-            time.sleep(3)
+            time.sleep(5)
 
 
 class Sartre(QtGui.QMainWindow):
@@ -130,6 +138,9 @@ class Sartre(QtGui.QMainWindow):
         self.hbox = QtGui.QHBoxLayout()
 
         self.c1 = QtWebKit.QWebView()
+        self.c1.page().settings().setAttribute(
+            QtWebKit.QWebSettings.JavascriptEnabled, True)
+
         self.c1.load(QtCore.QUrl("col.html"))
         self.hbox.addWidget(self.c1)
 
@@ -162,10 +173,18 @@ class Sartre(QtGui.QMainWindow):
         self.store.execute("CREATE TABLE status "
                            "(id INTEGER PRIMARY KEY, screen_name VARCHAR, "
                            "text VARCHAR)")
+
+        self.updateView()
         
         self.poller = Poll(self.store, self.c1.page())
-        self.connect(self.poller, QtCore.SIGNAL("polled()"), self.updateView)
+        self.connect(self.poller.store, QtCore.SIGNAL("polled()"), self.updateView)
+        self.connect(self.poller, QtCore.SIGNAL("poll()"), self.poll)
+
         self.poller.start()
+
+    def poll(self):
+        print "poll"
+        self.c1.page().mainFrame().evaluateJavaScript("twitter_poll(sartrestore)")
 
     def load_extensions(self):
         """Read the manifest files and register the particular scripts
@@ -220,7 +239,7 @@ class Sartre(QtGui.QMainWindow):
             html.append('</div>')
         html.append("</body></html>")
         content = ''.join(html)
-        f = open('/tmp/sar.col1.html', 'w')
+        f = codecs.open('/tmp/sar.col1.html', 'w', "utf-8")
         f.write(content)
         f.close()
         self.c1.setHtml(content, QtCore.QUrl(os.getcwd() + '/'))
