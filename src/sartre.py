@@ -7,10 +7,30 @@ import time
 from PyQt4 import QtCore
 from PyQt4 import QtGui
 from PyQt4 import QtWebKit
+from PyQt4.QtCore import *
+from PyQt4.QtGui import *
+from PyQt4.QtWebKit import *
 
-import twitter
 import storm.locals as storm
 import simplejson
+
+import pickle
+
+class SartreView(QtCore.QObject):
+    def __init__(self):
+        """Represents a view to JS
+        
+        Arguments:
+        - `self`:
+        """
+        QtCore.QObject.__init__(self)
+        self.statuses = []
+    
+    @pyqtSignature("add(QVariantMap)")
+    def add(self, data):
+        self.statuses.append({u'user':{u'screen_name':unicode(data.get(QString('screen_name')).toString())},
+                              u'text':unicode(data.get(QString('text')).toString())})
+
 
 class Status(object):
     __storm_table__ = "status"
@@ -20,7 +40,7 @@ class Status(object):
 
 # start to go
 class Poll(QtCore.QThread):
-    def __init__(self, store, parent = None):
+    def __init__(self, store, page, parent = None):
         """Poll accounts for new entries, insert into db
         
         Arguments:
@@ -29,6 +49,7 @@ class Poll(QtCore.QThread):
         """
         QtCore.QThread.__init__(self, parent)
         self.store = store
+        self.page = page
         self.exiting = False
 
     def __del__(self):
@@ -49,10 +70,13 @@ class Poll(QtCore.QThread):
         while not self.exiting:
             print "Poll.run"
             
-            #acnt = twitter.Twitter()
-            #s = acnt.statuses.public_timeline()
-            s = [{u'user':{u'screen_name':u'phunt'},
-                  u'text':u'this is @phunt status #twitter http://twitpic.com/1e10q image'}]
+            v = SartreView()
+            self.page.settings().setAttribute(QtWebKit.QWebSettings.JavascriptEnabled, True)
+
+            frame = self.page.mainFrame()
+            frame.addToJavaScriptWindowObject("tview", v)
+            frame.evaluateJavaScript("twitter_poll(tview)")
+            s = v.statuses
             for x in s:
                 status = Status()
                 status.screen_name = x['user']['screen_name']
@@ -102,7 +126,7 @@ class Sartre(QtGui.QMainWindow):
         self.toolbar.page().mainFrame().setScrollBarPolicy(
             QtCore.Qt.Vertical, QtCore.Qt.ScrollBarAlwaysOff )
         self.vbox.addWidget(self.toolbar)
-        
+
         self.hbox = QtGui.QHBoxLayout()
 
         self.c1 = QtWebKit.QWebView()
@@ -139,13 +163,15 @@ class Sartre(QtGui.QMainWindow):
                            "(id INTEGER PRIMARY KEY, screen_name VARCHAR, "
                            "text VARCHAR)")
         
-        self.poller = Poll(self.store)
+        self.poller = Poll(self.store, self.c1.page())
         self.connect(self.poller, QtCore.SIGNAL("polled()"), self.updateView)
         self.poller.start()
 
     def load_extensions(self):
         """Read the manifest files and register the particular scripts
         """
+        self.accountscripts = {}
+        self.accountscripts['twitter'] = []
         self.viewscripts = {}
         self.viewscripts['twitter'] = []
         for dirname, dirnames, filenames in os.walk('extensions'):
@@ -164,6 +190,11 @@ class Sartre(QtGui.QMainWindow):
                             spath =  os.path.join(dirname, subdirname, s)
                             self.viewscripts.get(key,[]).append(spath)
                             print "  " + key + "->" + spath
+                    for key, value in manifest.get('account', {}).items():
+                        for s in value:
+                            spath =  os.path.join(dirname, subdirname, s)
+                            self.accountscripts.get(key,[]).append(spath)
+                            print "  " + key + "->" + spath
 
     def updateView(self):
         """Update the list of statuses
@@ -174,6 +205,9 @@ class Sartre(QtGui.QMainWindow):
         html.append('<html><head>')
         html.append('<link rel=StyleSheet href="style.css" type="text/css">')
         html.append('<script type="text/javascript" src="jquery-1.3.2.js"></script>')
+        for s in self.accountscripts.get('twitter'):
+            html.append('<script type="text/javascript" src="'
+                        + s + '"></script>')
         for s in self.viewscripts.get('twitter'):
             html.append('<script type="text/javascript" src="'
                         + s + '"></script>')
@@ -190,7 +224,6 @@ class Sartre(QtGui.QMainWindow):
         f.write(content)
         f.close()
         self.c1.setHtml(content, QtCore.QUrl(os.getcwd() + '/'))
-
 
 if __name__ == '__main__':
     app = QtGui.QApplication(sys.argv)
